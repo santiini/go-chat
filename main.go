@@ -2,71 +2,44 @@ package main
 
 import (
 	"fmt"
-	"github.com/gorilla/websocket"
-	"log"
 	"net/http"
+	"react-go-chat/pkg/websocket"
 )
 
-// 我们需要定义一个 Upgrader
-// 它需要定义 ReadBufferSize 和 WriteBufferSize
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-
-	// 可以用来检查连接的来源
-	// 这将允许从我们的 React 服务向这里发出请求。
-	// 现在，我们可以不需要检查并运行任何连接
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
-
-// 定义一个 reader 用来监听 WS 发送的消息
-func reader(conn *websocket.Conn) {
-	for {
-		// 读消息
-		messageType, p, err := conn.ReadMessage()
-		if err != nil {
-			log.Println(err)
-			return
-		}
-
-		// 打印消息
-		fmt.Println(string(p))
-
-		// 写入消息
-		if err := conn.WriteMessage(messageType, p); err != nil {
-			log.Println(err)
-			return
-		}
-	}
-}
-
-// 定义 WebSocket 服务处理函数
-func serveWs(w http.ResponseWriter, r *http.Request) {
-	fmt.Println(r.Host)
-
-	// 将连接更新为 WebSocket 连接
-	ws, err := upgrader.Upgrade(w, r, nil)
+// http 接入，升级为 websocket
+func serveWs(pool *websocket.Pool, w http.ResponseWriter, r *http.Request) {
+	fmt.Println("Websocket Endpoint Hit")
+	conn, err := websocket.Upgrade(w, r)
 	if err != nil {
-		log.Println(err)
+		fmt.Fprintln(w, "%+v\n", err)
 	}
 
-	// 一致监听 WebSocket 连接上传来的消息
-	reader(ws)
+	client := &websocket.Client{
+		Conn: conn,
+		Pool: pool,
+	}
+
+	pool.Register <- client
+	client.Read()
 }
 
 func setupRoutes() {
+	pool := websocket.NewPool()
+
+	go pool.Start()
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "Simple server")
 	})
 
 	// 将 /ws 端点交给 serveWs 函数处理
-	http.HandleFunc("/ws", serveWs)
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		serveWs(pool, w, r)
+	})
 }
 
 func main() {
 	fmt.Println("Chat App v0.0.1")
 	setupRoutes()
-	http.ListenAndServe(":9001", nil)
+	http.ListenAndServe(":8010", nil)
 }
